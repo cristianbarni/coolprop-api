@@ -6,7 +6,15 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    fluids = ['R290', 'R600', 'R134a', 'R600', 'R170', 'R1234yf', 'R404A']
+    fluids = [
+        'R290',
+        'R600',
+        'R600a',
+        'R404A',
+        'R134a',
+        'R1234yf',
+        'R170',
+    ]
     properties = {
         'T': 'Temperature in K',
         'P': 'Pressure in Pa',
@@ -15,12 +23,10 @@ def home():
         'D': 'Density in kg/m3',
         'Q': 'Vapor quality',
         'C': 'Specific heat (Cp) in J/kg-K',
-        'O': 'Specific heat (Cv) in J;kg-K',
+        'O': 'Specific heat (Cv) in J/kg-K',
         'U': 'Internal energy in J/kg',
         'V': 'Viscosity in Pa-s',
         'L': 'Thermal conductivity in W/m-K',
-        'A': 'Speed of sound in m/s',
-        'G': 'Gibbs energy in J/kg'
     }
 
     fluid_options = "".join([f'<option value="{f}">{f}</option>' for f in fluids])
