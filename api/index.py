@@ -1,37 +1,104 @@
 from flask import Flask, request
+import json
 from CoolProp.CoolProp import PropsSI
+import ast
+import operator
+
+def safeEval(expr):
+    # Map allowed operators to their functional counterparts
+    operators = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.USub: operator.neg,  # Allows for negative numbers like -5
+    }
+
+    def _eval(node):
+        if isinstance(node, ast.Num):  # <--- Support for older Python versions
+            return node.n
+        elif isinstance(node, ast.Constant): # <--- Support for Python 3.8+
+            if not isinstance(node.value, (int, float)):
+                raise TypeError(f"Unsupported type: {type(node.value).__name__}")
+            return node.value
+        elif isinstance(node, ast.BinOp):  # <--- Binary operations (e.g., 2 + 2)
+            return operators[type(node.op)](_eval(node.left), _eval(node.right))
+        elif isinstance(node, ast.UnaryOp): # <--- Unary operations (e.g., -5)
+            return operators[type(node.op)](_eval(node.operand))
+        else:
+            raise TypeError(f"Unsupported operation: {type(node).__name__}")
+
+    try:
+        # Parse the expression into an AST
+        tree = ast.parse(expr, mode='eval')
+        return _eval(tree.body)
+    except Exception as e:
+        return f"Error: {e}"
 
 app = Flask(__name__)
+
+fluids = [
+    'R290',
+    'R600',
+    'R600a',
+    'R404A',
+    'R134a',
+    'R1234yf',
+    'R170',
+]
+properties = {
+    'T': {'desc': 'Temperature',
+          'units':
+          {
+              '°C': {'mult': 1, 'off': 273.15},
+              '°F': {'mult': 5/9, 'off': -32*5/9+273.15},
+              'K': {'mult': 1, 'off': 0},
+              'R': {'mult': 9/5, 'off': 0},
+          }},
+    'P': {'desc': 'Pressure', 'units':
+          {
+              'Pa (a)': {'mult': 1, 'off': 0},
+              'Pa (g)': {'mult': 1, 'off': 101325},
+              'kPa (a)': {'mult': 1000, 'off': 0},
+              'kPa (g)': {'mult': 1000, 'off': 101325},
+              'MPa (a)': {'mult': 1000000, 'off': 0},
+              'MPa (g)': {'mult': 1000000, 'off': 101325},
+              'bar (a)': {'mult': 100000, 'off': 0},
+              'bar (g)': {'mult': 100000, 'off': 101325},
+              'atm (a)': {'mult': 101325, 'off': 0},
+              'atm (g)': {'mult': 101325, 'off': 101325},
+              'psi (a)': {'mult': 6894.76, 'off': 0},
+              'psi (g)': {'mult': 6894.76, 'off': 101325},
+              'inHg (a)': {'mult': 3386.39, 'off': 0},
+              'inHg (g)': {'mult': 3386.39, 'off': 101325},
+              'mmHg (a)': {'mult': 760, 'off': 0},
+              'mmHg (g)': {'mult': 760, 'off': 101325},
+          }},
+    'H': {'desc': 'Enthalpy', 'units':
+          {
+              'J/kg': {'mult': 1, 'off': 0},
+              'kJ/kg': {'mult': 1000, 'off': 0},
+              'cal/kg': {'mult': 4.184, 'off': 0},
+              'kcal/kg': {'mult': 4184, 'off': 0},
+          }},
+    'D': {'desc': 'Density', 'units': {'kg/m3': {'mult': 1, 'off': 0}}},
+    'S': {'desc': 'Entropy', 'units': {'J/kg-K': {'mult': 1, 'off': 0}}},
+    'Q': {'desc': 'Vapor quality', 'units': {'-': {'mult': 1, 'off': 0}}},
+    'C': {'desc': 'Specific heat (Cp)', 'units': {'J/kg-K': {'mult': 1, 'off': 0}}},
+    'O': {'desc': 'Specific heat (Cv)', 'units': {'J/kg-K': {'mult': 1, 'off': 0}}},
+    'U': {'desc': 'Internal energy', 'units': {'J/kg': {'mult': 1, 'off': 0}}},
+    'V': {'desc': 'Viscosity', 'units': {'Pa-s': {'mult': 1, 'off': 0}}},
+    'L': {'desc': 'Thermal conductivity', 'units': {'W/m-K': {'mult': 1, 'off': 0}}},
+}
 
 
 @app.route('/')
 def home():
-    fluids = [
-        'R290',
-        'R600',
-        'R600a',
-        'R404A',
-        'R134a',
-        'R1234yf',
-        'R170',
-    ]
-    properties = {
-        'T': 'Temperature in K',
-        'P': 'Pressure in Pa',
-        'H': 'Enthalpy in J/kg',
-        'S': 'Entropy in J/kg-K',
-        'D': 'Density in kg/m3',
-        'Q': 'Vapor quality',
-        'C': 'Specific heat (Cp) in J/kg-K',
-        'O': 'Specific heat (Cv) in J/kg-K',
-        'U': 'Internal energy in J/kg',
-        'V': 'Viscosity in Pa-s',
-        'L': 'Thermal conductivity in W/m-K',
-    }
 
     fluid_options = "".join([f'<option value="{f}">{f}</option>' for f in fluids])
-    property_options = "".join([f'<option value="{k}">{v}</option>' for k,
-                               v in sorted(properties.items(), key=lambda item: item[1])])
+    property_options = "".join([f'<option value="{k}">{v["desc"]}</option>' for k,
+                               v in sorted(properties.items(), key=lambda item: item[1]["desc"])])
+    properties_json = json.dumps(properties)
 
     return f"""
 <!DOCTYPE html>
@@ -61,19 +128,28 @@ def home():
         <select id="fluid" name="fluid">{fluid_options}</select>
 
         <label for="output_type">Output Property:</label>
-        <select id="output_type" name="output_type">{property_options}</select>
+        <div style="display: flex; gap: 5px;">
+            <select id="output_type" name="output_type" style="flex-grow: 1;">{property_options}</select>
+            <select id="output_unit" name="output_unit" style="width: 90px;"></select>
+        </div>
 
         <label for="input_type1">Input Property 1:</label>
         <select id="input_type1" name="input_type1">{property_options}</select>
 
         <label for="input_value1">Input Value 1:</label>
-        <input type="number" id="input_value1" name="input_value1" step="any" required placeholder="e.g., 300 for Temperature in K">
+        <div style="display: flex; gap: 5px;">
+            <input type="text" id="input_value1" name="input_value1" required placeholder="e.g., 300 or 273.15+20" style="flex-grow: 1;">
+            <select id="input_unit1" name="input_unit1" style="width: 90px;"></select>
+        </div>
 
         <label for="input_type2">Input Property 2:</label>
         <select id="input_type2" name="input_type2">{property_options}</select>
 
         <label for="input_value2">Input Value 2:</label>
-        <input type="number" id="input_value2" name="input_value2" step="any" required placeholder="e.g., 101325 for Pressure in Pa">
+        <div style="display: flex; gap: 5px;">
+            <input type="text" id="input_value2" name="input_value2" required placeholder="e.g., 101325 or 1.013e5" style="flex-grow: 1;">
+            <select id="input_unit2" name="input_unit2" style="width: 90px;"></select>
+        </div>
 
         <button type="submit">Calculate</button>
     </form>
@@ -84,6 +160,40 @@ def home():
     </div>
 
     <script>
+        const properties = {properties_json};
+
+        function updateUnits(typeSelectId, unitSelectId) {{
+            const typeSelect = document.getElementById(typeSelectId);
+            const unitSelect = document.getElementById(unitSelectId);
+            const selectedType = typeSelect.value;
+            const propData = properties[selectedType];
+
+            unitSelect.innerHTML = '';
+
+            if (propData && propData.units) {{
+                for (const unit in propData.units) {{
+                    const option = document.createElement('option');
+                    option.value = unit;
+                    option.textContent = unit;
+                    unitSelect.appendChild(option);
+                }}
+            }} else {{
+                const option = document.createElement('option');
+                option.value = '-';
+                option.textContent = '-';
+                unitSelect.appendChild(option);
+            }}
+        }}
+
+        document.getElementById('input_type1').addEventListener('change', () => updateUnits('input_type1', 'input_unit1'));
+        document.getElementById('input_type2').addEventListener('change', () => updateUnits('input_type2', 'input_unit2'));
+        document.getElementById('output_type').addEventListener('change', () => updateUnits('output_type', 'output_unit'));
+
+        // Initialize units
+        updateUnits('input_type1', 'input_unit1');
+        updateUnits('input_type2', 'input_unit2');
+        updateUnits('output_type', 'output_unit');
+
         document.getElementById('propssi-form').addEventListener('submit', async function (e) {{
             e.preventDefault();
             const form = e.target;
@@ -122,17 +232,49 @@ def about():
 def CP_PropsSI():
     try:
         output_type = request.args.get('output_type', type=str)
+        output_unit = request.args.get('output_unit', type=str)
         input_type1 = request.args.get('input_type1', type=str)
-        input_value1 = request.args.get('input_value1', type=float)
+        input_value1_raw = request.args.get('input_value1', type=str)
+        input_unit1 = request.args.get('input_unit1', type=str)
         input_type2 = request.args.get('input_type2', type=str)
-        input_value2 = request.args.get('input_value2', type=float)
+        input_value2_raw = request.args.get('input_value2', type=str)
+        input_unit2 = request.args.get('input_unit2', type=str)
         fluid = request.args.get('fluid', type=str)
 
-        if not all([output_type, input_type1, input_value1 is not None, input_type2, input_value2 is not None, fluid]):
+        if not all([output_type, input_type1, input_value1_raw, input_type2, input_value2_raw, fluid]):
             return "Missing one or more required parameters: output_type, input_type1, input_value1, input_type2, input_value2, fluid.", 400
 
-        result = PropsSI(output_type, input_type1, input_value1, input_type2, input_value2, fluid)
-        return str(result)
+        # Evaluate expressions safely
+        input_value1 = safeEval(input_value1_raw)
+        if isinstance(input_value1, str) and input_value1.startswith("Error"):
+            return f"Invalid input 1: {input_value1}", 400
+
+        # Apply unit conversion for input 1
+        if input_unit1 and input_type1 in properties:
+            unit_data = properties[input_type1]['units'].get(input_unit1)
+            if unit_data:
+                input_value1 = (input_value1 * unit_data['mult']) + unit_data['off']
+
+        input_value2 = safeEval(input_value2_raw)
+        if isinstance(input_value2, str) and input_value2.startswith("Error"):
+            return f"Invalid input 2: {input_value2}", 400
+
+        # Apply unit conversion for input 2
+        if input_unit2 and input_type2 in properties:
+            unit_data = properties[input_type2]['units'].get(input_unit2)
+            if unit_data:
+                input_value2 = (input_value2 * unit_data['mult']) + unit_data['off']
+
+        result = PropsSI(output_type, input_type1, float(input_value1), input_type2, float(input_value2), fluid)
+
+        # Apply unit conversion for output
+        if output_unit and output_type in properties:
+            unit_data = properties[output_type]['units'].get(output_unit)
+            if unit_data:
+                result = (result - unit_data['off']) / unit_data['mult']
+
+        result = round(result, 2)
+        return str(result) + output_unit
     except ValueError as e:
         return f"Invalid input or calculation error: {e}", 400
     except Exception as e:
