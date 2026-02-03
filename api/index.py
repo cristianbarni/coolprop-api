@@ -124,8 +124,12 @@ def home():
     <h1>CoolProp PropsSI Calculator</h1>
     <p>Use this form to calculate a thermophysical property of a fluid.</p>
     <form id="propssi-form">
-        <label for="fluid">Fluid:</label>
-        <select id="fluid" name="fluid">{fluid_options}</select>
+        <label>Fluid(s):</label>
+        <div style="display: flex; align-items: flex-start;">
+            <div id="fluid-container" style="display: flex; flex-direction: column; gap: 5px; flex-grow: 1;">
+            </div>
+            <button type="button" id="add-fluid-btn" style="margin-left: 5px; padding: 5px 10px;">+</button>
+        </div>
 
         <label for="output_type">Output Property:</label>
         <div style="display: flex; gap: 5px;">
@@ -161,6 +165,7 @@ def home():
 
     <script>
         const properties = {properties_json};
+        const fluidOptionsHTML = `{fluid_options}`;
 
         function updateUnits(typeSelectId, unitSelectId) {{
             const typeSelect = document.getElementById(typeSelectId);
@@ -194,8 +199,82 @@ def home():
         updateUnits('input_type2', 'input_unit2');
         updateUnits('output_type', 'output_unit');
 
+        // Fluid selection logic
+        const fluidContainer = document.getElementById('fluid-container');
+        const addFluidBtn = document.getElementById('add-fluid-btn');
+
+        function createFluidRow() {{
+            const fluidRow = document.createElement('div');
+            fluidRow.className = 'fluid-row';
+            fluidRow.style.display = 'flex';
+            fluidRow.style.gap = '5px';
+
+            const select = document.createElement('select');
+            select.name = 'fluid[]';
+            select.className = 'fluid-select';
+            select.style.flexGrow = '1';
+            select.innerHTML = fluidOptionsHTML;
+
+            const percentageInput = document.createElement('input');
+            percentageInput.type = 'number';
+            percentageInput.name = 'fluid_percentage[]';
+            percentageInput.className = 'fluid-percentage';
+            percentageInput.placeholder = '%';
+            percentageInput.min = 0;
+            percentageInput.max = 100;
+            percentageInput.style.width = '60px';
+            percentageInput.style.display = 'none';
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.textContent = '-';
+            removeBtn.style.padding = '5px 10px';
+            removeBtn.addEventListener('click', () => {{
+                fluidRow.remove();
+                updateFluidInputs();
+            }});
+
+            fluidRow.appendChild(select);
+            fluidRow.appendChild(percentageInput);
+            fluidRow.appendChild(removeBtn);
+
+            return fluidRow;
+        }}
+
+        function updateFluidInputs() {{
+            const rows = fluidContainer.querySelectorAll('.fluid-row');
+            const showPercentages = rows.length > 1;
+
+            rows.forEach((row) => {{
+                row.querySelector('.fluid-percentage').style.display = showPercentages ? 'block' : 'none';
+                row.querySelector('button[type="button"]').style.display = rows.length > 1 ? 'inline-block' : 'none';
+            }});
+        }}
+
+        addFluidBtn.addEventListener('click', () => {{
+            fluidContainer.appendChild(createFluidRow());
+            updateFluidInputs();
+        }});
+
+        // Initial fluid row
+        fluidContainer.appendChild(createFluidRow());
+        updateFluidInputs();
+
         document.getElementById('propssi-form').addEventListener('submit', async function (e) {{
             e.preventDefault();
+            
+            const fluidRows = document.querySelectorAll('.fluid-row');
+            if (fluidRows.length > 1) {{
+                let total = 0;
+                document.querySelectorAll('.fluid-percentage').forEach(input => total += Number(input.value));
+                if (Math.abs(total - 100) > 0.01) {{
+                    const resultDiv = document.getElementById('result');
+                    resultDiv.textContent = 'Error: Percentages must sum to 100%. Current sum: ' + total + '%';
+                    resultDiv.classList.add('error');
+                    return;
+                }}
+            }}
+
             const form = e.target;
             const formData = new FormData(form);
             const params = new URLSearchParams(formData);
@@ -239,9 +318,13 @@ def CP_PropsSI():
         input_type2 = request.args.get('input_type2', type=str)
         input_value2_raw = request.args.get('input_value2', type=str)
         input_unit2 = request.args.get('input_unit2', type=str)
-        fluid = request.args.get('fluid', type=str)
+        
+        fluids = request.args.getlist('fluid[]')
+        percentages = request.args.getlist('fluid_percentage[]')
+        if not fluids:
+            fluids = [request.args.get('fluid', type=str)] if request.args.get('fluid') else []
 
-        if not all([output_type, input_type1, input_value1_raw, input_type2, input_value2_raw, fluid]):
+        if not all([output_type, input_type1, input_value1_raw, input_type2, input_value2_raw]) or not fluids:
             return "Missing one or more required parameters: output_type, input_type1, input_value1, input_type2, input_value2, fluid.", 400
 
         # Evaluate expressions safely
@@ -265,7 +348,21 @@ def CP_PropsSI():
             if unit_data:
                 input_value2 = (input_value2 * unit_data['mult']) + unit_data['off']
 
-        result = PropsSI(output_type, input_type1, float(input_value1), input_type2, float(input_value2), fluid)
+        if len(fluids) > 1:
+            if len(percentages) != len(fluids):
+                return "Number of fluids and percentages do not match.", 400
+            try:
+                percs = [float(p) for p in percentages]
+            except ValueError:
+                return "Invalid percentage values.", 400
+            if abs(sum(percs) - 100) > 0.01:
+                return f"Percentages must sum to 100. Current sum: {sum(percs)}", 400
+            
+            fluid_str = "HEOS::" + "&".join([f"{f}[{p/100}]" for f, p in zip(fluids, percs)])
+        else:
+            fluid_str = fluids[0]
+
+        result = PropsSI(output_type, input_type1, float(input_value1), input_type2, float(input_value2), fluid_str)
 
         # Apply unit conversion for output
         if output_unit and output_type in properties:
